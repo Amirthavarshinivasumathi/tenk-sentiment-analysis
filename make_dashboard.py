@@ -1,7 +1,9 @@
 """make_dashboard.py.
 
 Generates dashboard/index.html — a single self-contained HTML file with:
-- All financial & sentiment data inlined (no external fetch/XHR required)
+- All values read directly from output/AAPL_10K_Analysis.xlsx and
+  output/INTC_10K_Analysis.xlsx as the single source of truth
+  (never recomputed)
 - Chart.js loaded from CDN (works locally via file:// and on GitHub Pages)
 - KPI cards (10-yr revenue growth, 10-yr stock growth, FY2025 net margin)
 - MD&A Sentiment P/N ratio vs. Stock Price charts for AAPL and INTC
@@ -17,18 +19,23 @@ import openpyxl
 
 OUTPUT_DIR = "dashboard"
 OUTPUT_FILE = os.path.join(OUTPUT_DIR, "index.html")
+ROOT_FILE = "index.html"
 YEARS = [f"FY{y}" for y in range(2016, 2026)]
 
 
 def extract_data(ticker):
-    """Extract complete ten-year data from ticker's 10-K workbook."""
+    """Extract complete ten-year data directly from ticker's workbook.
+
+    Reads output/{ticker}_10K_Analysis.xlsx as the single source of truth,
+    mapping all values strictly by fiscal year (FY2016 through FY2025).
+    """
     wb_path = f"output/{ticker}_10K_Analysis.xlsx"
     if not os.path.exists(wb_path):
         raise FileNotFoundError(f"Workbook not found: {wb_path}")
 
     wb = openpyxl.load_workbook(wb_path, data_only=True)
 
-    # 1. Chart tab: Stock Price and MD&A P/N Ratio
+    # 1. Chart tab: Stock Price and MD&A P/N Ratio directly from workbook
     ws_chart = wb["Chart"]
     stock_prices = {}
     pn_ratios = {}
@@ -38,7 +45,7 @@ def extract_data(ticker):
             stock_prices[fy] = round(float(r[1]), 2) if r[1] else 0.0
             pn_ratios[fy] = round(float(r[2]), 4) if r[2] else 0.0
 
-    # 2. Ratios tab
+    # 2. Ratios tab: 4 Ratios + Revenue and Net Income directly from workbook
     ws_ratios = wb["Ratios"]
     ratios_dict = {}
     for r in list(ws_ratios.iter_rows(values_only=True))[3:13]:
@@ -56,8 +63,9 @@ def extract_data(ticker):
                 "net_income": float(r[12]) if r[12] else 0.0,
             }
 
-    # 3. Income Statement tab
-    col_to_fy = {i + 1: f"FY{2025 - i}" for i in range(10)}
+    # 3. Income Statement tab: R&D and Gross Profit / Margin
+    # Columns 1 to 10 correspond to reverse order: FY2025 down to FY2016
+    col_to_fy = {i: f"FY{2025 - (i - 1)}" for i in range(1, 11)}
     ws_is = wb["Income Statement"]
     rd_expense = {}
     gross_profit = {}
@@ -74,7 +82,9 @@ def extract_data(ticker):
                 if r[col_idx] is not None and fy not in gross_profit:
                     gross_profit[fy] = float(r[col_idx])
 
-    # 4. Cash Flows tab
+    # 4. Cash Flows tab: Capex, Buybacks, and Dividends
+    # Apple dividends strictly uses 'Payments for dividends and dividend
+    # equivalents' as instructed by user specifications.
     ws_cf = wb["Cash Flows"]
     capex = {}
     dividends = {}
@@ -115,12 +125,15 @@ def extract_data(ticker):
                     elif label == "Repurchase of common stock":
                         buybacks[fy] = amt
 
-    # 5. Sentiment Analysis tab
+    # 5. Sentiment Analysis tab: read directly from workbook
     ws_sent = wb["Sentiment Analysis"]
     sentiment_rows = []
     for r in list(ws_sent.iter_rows(values_only=True))[3:13]:
         if r[0]:
             fy = str(r[0]).strip()
+            # Read P/N ratio directly from Sentiment Analysis tab column 8
+            # ensuring exact workbook value (e.g., AAPL FY2023 = 0.2703)
+            wb_pn_ratio = round(float(r[8]), 4) if r[8] else 0.0
             sentiment_rows.append(
                 {
                     "company": ticker,
@@ -136,21 +149,20 @@ def extract_data(ticker):
                     "neg_pct": (
                         round(float(r[7]) * 100.0, 3) if r[7] else 0.0
                     ),
-                    "pn_ratio": round(float(r[8]), 4) if r[8] else 0.0,
+                    "pn_ratio": wb_pn_ratio,
                     "uncertainty": int(r[9]) if r[9] else 0,
                     "litigious": int(r[11]) if r[11] else 0,
                     "stock_price": stock_prices.get(fy, 0.0),
                 }
             )
 
-    sentiment_rows = sorted(sentiment_rows, key=lambda x: x["fiscal_year"])
-
-    # Build metric series
+    # Build metric series in strict chronological order (FY2016 -> FY2025)
     rev_series = [ratios_dict[fy]["revenue"] for fy in YEARS]
     ni_series = [ratios_dict[fy]["net_income"] for fy in YEARS]
     cr_series = [ratios_dict[fy]["current_ratio"] for fy in YEARS]
     tle_series = [ratios_dict[fy]["liab_to_equity"] for fy in YEARS]
     at_series = [ratios_dict[fy]["asset_turnover"] for fy in YEARS]
+    # Net profit margin read directly from workbook Ratios tab
     npm_series = [ratios_dict[fy]["net_profit_margin"] for fy in YEARS]
     price_series = [stock_prices.get(fy, 0.0) for fy in YEARS]
     pn_series = [pn_ratios.get(fy, 0.0) for fy in YEARS]
@@ -252,9 +264,14 @@ def build_html(aapl, intc):
     }
     json_str = json.dumps(dashboard_data, indent=2)
 
+    # Sort table rows reverse chronologically (FY2025 -> FY2016)
+    # with AAPL always listed first for each fiscal year, then INTC
     all_sentiment_rows = aapl["sentiment_rows"] + intc["sentiment_rows"]
     all_sentiment_rows.sort(
-        key=lambda r: (r["fiscal_year"], r["company"]), reverse=True
+        key=lambda r: (
+            -int(r["fiscal_year"][2:]),
+            0 if r["company"] == "AAPL" else 1,
+        )
     )
 
     table_rows_html = []
@@ -1122,7 +1139,7 @@ def build_html(aapl, intc):
 
 def main():
     """Extract data, build dashboard HTML, and save to dashboard/index.html."""
-    print("Extracting data for AAPL and INTC...")
+    print("Extracting data for AAPL and INTC directly from workbooks...")
     aapl_data = extract_data("AAPL")
     intc_data = extract_data("INTC")
 
@@ -1133,8 +1150,12 @@ def main():
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write(html_output)
 
+    with open(ROOT_FILE, "w", encoding="utf-8") as f:
+        f.write(html_output)
+
     file_size_kb = os.path.getsize(OUTPUT_FILE) / 1024.0
     print(f"Successfully generated: {OUTPUT_FILE} ({file_size_kb:.1f} KB)")
+    print(f"Updated root file: {ROOT_FILE}")
 
 
 if __name__ == "__main__":

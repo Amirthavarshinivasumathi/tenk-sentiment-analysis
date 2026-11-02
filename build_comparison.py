@@ -1,10 +1,9 @@
 """build_comparison.py.
 
 Generates six comparison charts comparing Apple Inc. (AAPL) and Intel
-Corporation (INTC) using data extracted from their respective 10-K analysis
-workbooks:
-- 'output/AAPL_10K_Analysis.xlsx'
-- 'output/INTC_10K_Analysis.xlsx'
+Corporation (INTC) using data read directly from their respective 10-K analysis
+workbooks ('output/AAPL_10K_Analysis.xlsx' and 'output/INTC_10K_Analysis.xlsx')
+as the single source of truth — never recomputing or altering values.
 
 Charts generated in 'output/figures/':
 1. aapl_sentiment_vs_stock_price.png: AAPL sentiment P/N vs. stock price
@@ -40,10 +39,11 @@ REVENUE_COLOR = "#555555"  # Slate grey
 
 
 def extract_company_data(ticker):
-    """Extract financial metrics, ratios, sentiment, and capital allocation.
+    """Extract financial metrics directly from workbook as source of truth.
 
-    Reads the company workbook and returns a comprehensive dictionary with
-    chronologically ordered data for FY2016 through FY2025.
+    Reads output/{ticker}_10K_Analysis.xlsx and extracts all values keyed
+    strictly by fiscal year (FY2016 through FY2025) without recomputing
+    ratios or sentiment metrics.
     """
     wb_path = f"output/{ticker}_10K_Analysis.xlsx"
     if not os.path.exists(wb_path):
@@ -53,18 +53,16 @@ def extract_company_data(ticker):
 
     # 1. Chart tab: Stock Price and MD&A P/N Ratio
     ws_chart = wb["Chart"]
-    chart_rows = list(ws_chart.iter_rows(values_only=True))
     stock_prices = {}
     pn_ratios = {}
-    for r in chart_rows[3:13]:
+    for r in list(ws_chart.iter_rows(values_only=True))[3:13]:
         if r[0]:
             fy = str(r[0]).strip()
             stock_prices[fy] = float(r[1]) if r[1] is not None else 0.0
             pn_ratios[fy] = float(r[2]) if r[2] is not None else 0.0
 
-    # 2. Ratios tab: 4 Ratios + Revenue and Net Income
+    # 2. Ratios tab: 4 Ratios + Revenue and Net Income directly from workbook
     ws_ratios = wb["Ratios"]
-    ratios_rows = list(ws_ratios.iter_rows(values_only=True))
     current_ratio = {}
     liab_to_equity = {}
     asset_turnover = {}
@@ -72,7 +70,7 @@ def extract_company_data(ticker):
     revenue = {}
     net_income = {}
 
-    for r in ratios_rows[3:13]:
+    for r in list(ws_ratios.iter_rows(values_only=True))[3:13]:
         if r[0]:
             fy = str(r[0]).strip()
             current_ratio[fy] = float(r[2]) if r[2] is not None else 0.0
@@ -83,8 +81,8 @@ def extract_company_data(ticker):
             net_income[fy] = float(r[12]) if r[12] is not None else 0.0
 
     # 3. Income Statement tab: R&D and Gross Profit / Margin
-    # Columns 1 to 10 are in reverse chronological order (FY2025 -> FY2016)
-    col_to_fy = {i + 1: f"FY{2025 - i}" for i in range(10)}
+    # Columns 1 to 10 correspond to reverse order: FY2025 down to FY2016
+    col_to_fy = {i: f"FY{2025 - (i - 1)}" for i in range(1, 11)}
     ws_is = wb["Income Statement"]
     rd_expense = {}
     gross_profit = {}
