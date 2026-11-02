@@ -1,0 +1,34 @@
+# Python bytecode & cache
+__pycache__/
+_pycache_/
+*.py[cod]
+*$py.class
+
+# Project data & filings (large raw files & SEC downloads)
+data/
+Data/
+filings/
+
+# Environment & Virtual Environments
+.env
+.venv/
+venv/
+ENV/
+env/
+
+# Operating System files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Microsoft Excel temporary lock files
+~$*.xlsx
+~$*.xls
+
+# Temporary & Log files
+*.log
+*.tmp
